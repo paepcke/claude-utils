@@ -4,7 +4,7 @@
 # @Author: Andreas Paepcke
 # @Date:   2026-08-25 09:31:30
 # @Last Modified by:   Andreas Paepcke
-# @Last Modified time: 2026-08-25 10:53:56
+# @Last Modified time: 2026-08-25 11:26:05
 # ***********************************
 #!/usr/bin/env python3
 """
@@ -48,7 +48,7 @@ from pathlib import Path
 # Claude's current per-upload file count limit. Kept as a single
 # constant since this limit may change; batching logic below derives
 # everything from it.
-UPLOAD_BATCH_SIZE = 20
+UPLOAD_BATCH_SIZE = 10
 
 
 class ProjectFileStager:
