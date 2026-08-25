@@ -4,7 +4,7 @@
 # @Author: Andreas Paepcke
 # @Date:   2026-08-25 09:31:30
 # @Last Modified by:   Andreas Paepcke
-# @Last Modified time: 2026-08-25 10:01:35
+# @Last Modified time: 2026-08-25 10:53:56
 # ***********************************
 #!/usr/bin/env python3
 """
@@ -26,6 +26,12 @@ in the project composer).
     '/' replaced by '__' (avoids collisions when an uploader only
     supports flat multi-file selection rather than folder drops)
 
+If the number of files to stage exceeds UPLOAD_BATCH_SIZE, files are
+split across "UploadBatch1", "UploadBatch2", ... subfolders of destdir,
+each holding at most UPLOAD_BATCH_SIZE files, to match Claude's
+per-upload file count limit. Below that threshold, files are placed
+directly in destdir as before.
+
 Usage:
     python3 stage_project_files.py \\
         /path/to/repo \\
@@ -38,6 +44,11 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
+
+# Claude's current per-upload file count limit. Kept as a single
+# constant since this limit may change; batching logic below derives
+# everything from it.
+UPLOAD_BATCH_SIZE = 20
 
 
 class ProjectFileStager:
@@ -70,28 +81,51 @@ class ProjectFileStager:
                       f"Remove it or pass a different --destdir and try again.")
 
         rel_paths = self._read_filelist()
-        self.destdir.mkdir(parents=True)
 
-        copied = []
+        found = []
         missing = []
-
         for rel_path in rel_paths:
             src = self.reporoot / rel_path
-            if not src.is_file():
-                missing.append(rel_path)
-                continue
-
-            if self.flatten:
-                dest_name = rel_path.replace('/', '__')
-                dest = self.destdir / dest_name
+            if src.is_file():
+                found.append(rel_path)
             else:
-                dest = self.destdir / rel_path
-                dest.parent.mkdir(parents=True, exist_ok=True)
+                missing.append(rel_path)
 
-            shutil.copy2(src, dest)
-            copied.append(rel_path)
+        self.destdir.mkdir(parents=True)
 
-        self._report(copied, missing)
+        batches = self._make_batches(found)
+        for batch_dir, batch_rel_paths in batches:
+            batch_dir.mkdir(parents=True, exist_ok=True)
+            for rel_path in batch_rel_paths:
+                src = self.reporoot / rel_path
+                if self.flatten:
+                    dest = batch_dir / rel_path.replace('/', '__')
+                else:
+                    dest = batch_dir / rel_path
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+
+        self._report(found, missing, len(batches))
+
+    def _make_batches(self, found):
+        '''
+        Split the found relative paths into upload-sized batches.
+
+        :param found: list of repo-relative path strings that exist
+        :return: list of (batch_dir, rel_paths) tuples. A single
+            (self.destdir, found) tuple if found fits within
+            UPLOAD_BATCH_SIZE; otherwise one tuple per
+            "UploadBatchN" subfolder of destdir.
+        '''
+        if len(found) <= UPLOAD_BATCH_SIZE:
+            return [(self.destdir, found)]
+
+        batches = []
+        for i in range(0, len(found), UPLOAD_BATCH_SIZE):
+            batch_num = i // UPLOAD_BATCH_SIZE + 1
+            batch_dir = self.destdir / f"UploadBatch{batch_num}"
+            batches.append((batch_dir, found[i:i + UPLOAD_BATCH_SIZE]))
+        return batches
 
     def _read_filelist(self):
         '''
@@ -106,10 +140,12 @@ class ProjectFileStager:
                 rel_paths.append(line)
         return rel_paths
 
-    def _report(self, copied, missing):
+    def _report(self, copied, missing, num_batches):
         '''
         :param copied: list of successfully copied relative paths
         :param missing: list of relative paths not found under reporoot
+        :param num_batches: number of UploadBatchN subfolders created
+            (0 if files were placed directly in destdir)
         '''
         print(f"Copied {len(copied)} file(s) into {self.destdir}")
         if missing:
@@ -117,7 +153,13 @@ class ProjectFileStager:
             for rel_path in missing:
                 print(f"  {rel_path}")
         mode = "flat" if self.flatten else "with paths"
-        print(f"\nFiles staged {mode} in {self.destdir} for upload to claude.")
+        if num_batches > 1:
+            print(f"\n{len(copied)} files exceed the {UPLOAD_BATCH_SIZE}-file "
+                  f"upload limit — split {mode} across {num_batches} "
+                  f"subfolders (UploadBatch1..UploadBatch{num_batches}) "
+                  f"in {self.destdir} for upload to claude.")
+        else:
+            print(f"\nFiles staged {mode} in {self.destdir} for upload to claude.")
 
 
 def main():
