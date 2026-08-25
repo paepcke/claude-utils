@@ -4,9 +4,9 @@
 # @Author: Andreas Paepcke
 # @Date:   2026-08-25 09:31:30
 # @Last Modified by:   Andreas Paepcke
-# @Last Modified time: 2026-08-25 09:49:19
+# @Last Modified time: 2026-08-25 10:01:35
 # ***********************************
-
+#!/usr/bin/env python3
 """
 stage_project_files.py
 
@@ -19,17 +19,18 @@ in the project composer).
 :param filelist: path to a text file listing one repo-relative file
     path per line (blank lines and lines starting with '#' are
     ignored)
-:param destdir: path to the directory to copy staged files into;
-    created if it does not exist; existing contents are removed first
+:param destdir: optional path to the directory to copy staged files
+    into (default: ./staged); refuses to run if it already exists,
+    to avoid clobbering a previous staging run
 :param flatten: if given, filenames are flattened into destdir with
     '/' replaced by '__' (avoids collisions when an uploader only
     supports flat multi-file selection rather than folder drops)
 
 Usage:
-    python3 stage_files_for_claude.py \\
-        --reporoot /path/to/repo \\
-        --filelist files_to_stage.txt \\
-        --destdir ./staged \\
+    python3 stage_project_files.py \\
+        /path/to/repo \\
+        files_to_stage.txt \\
+        [--destdir ./staged] \\
         [--flatten]
 """
 
@@ -42,17 +43,18 @@ from pathlib import Path
 class ProjectFileStager:
     '''Stages a curated file list from a repo into a clean upload directory.'''
 
-    def __init__(self, reporoot, filelist, destdir, flatten=False):
+    def __init__(self, reporoot, filelist, destdir=None, flatten=False):
         '''
         :param reporoot: root of the source repository
         :param filelist: path to file with one repo-relative path per line
         :param destdir: destination directory for staged copies
+            (default: ./staged); must not already exist
         :param flatten: if True, flatten paths with '__' instead of
             preserving directory structure
         '''
         self.reporoot = Path(reporoot).expanduser().resolve()
         self.filelist_path = Path(filelist).expanduser().resolve()
-        self.destdir = Path(destdir).expanduser().resolve()
+        self.destdir = Path(destdir if destdir else './staged').expanduser().resolve()
         self.flatten = flatten
 
     def run(self):
@@ -62,11 +64,12 @@ class ProjectFileStager:
             sys.exit(f"Repo root not found or not a directory: {self.reporoot}")
         if not self.filelist_path.is_file():
             sys.exit(f"File list not found: {self.filelist_path}")
+        if self.destdir.exists():
+            sys.exit(f"Destination already exists, refusing to overwrite: "
+                      f"{self.destdir}\n"
+                      f"Remove it or pass a different --destdir and try again.")
 
         rel_paths = self._read_filelist()
-
-        if self.destdir.exists():
-            shutil.rmtree(self.destdir)
         self.destdir.mkdir(parents=True)
 
         copied = []
@@ -113,6 +116,8 @@ class ProjectFileStager:
             print(f"\nNot found ({len(missing)}) — check paths / reporoot:")
             for rel_path in missing:
                 print(f"  {rel_path}")
+        mode = "flat" if self.flatten else "with paths"
+        print(f"\nFiles staged {mode} in {self.destdir} for upload to claude.")
 
 
 def main():
@@ -120,13 +125,14 @@ def main():
         description="Stage a curated subset of repo files for Claude "
                      "project upload."
     )
-    parser.add_argument('--reporoot', required=True,
+    parser.add_argument('reporoot',
                          help="Root directory of the source repository")
-    parser.add_argument('--filelist', required=True,
+    parser.add_argument('filelist',
                          help="Text file with one repo-relative file path "
                               "per line")
-    parser.add_argument('--destdir', required=True,
-                         help="Destination directory for staged copies")
+    parser.add_argument('--destdir', default=None,
+                         help="Destination directory for staged copies "
+                              "(default: ./staged); must not already exist")
     parser.add_argument('--flatten', action='store_true', default=False,
                          help="Flatten paths with '__' instead of "
                               "preserving directory structure "
